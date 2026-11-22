@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+"""Controle de luzes do Alienware m16 R2 no Linux.
+
+Protocolo portado de https://github.com/T-Troll/alien-tools (AlienRGB SDK):
+  - AW-ELC 187c:0551 (API v4): touchpad, traseira/tampa, botão de energia
+  - Teclado Darfon 0d62:d2b1 (API v5): teclado RGB por tecla
+
+Uso:
+  alien-rgb <zona>[,<zona>...] <cor RRGGBB>
+  zonas: touchpad, tampa, energia, teclado, tudo
+  ex.: alien-rgb tampa,touchpad 8000ff
+
+Modos:
+  alien-rgb discreto   apaga tampa e touchpad; teclado e energia em lilás (padrão no login)
+  alien-rgb normal     tudo em lilás (#AD7FA8)
+  alien-rgb alternar   troca entre discreto e normal (atalho Super+Alt+T)
+"""
+import fcntl, glob, os, sys, time
+
+# IDs do mapeamento "Alienware m16R2" em alienrgb-gui/Mappings/devices.csv
+ELC_LIGHTS = {"touchpad": 0, "tampa": 2, "energia": 4}
+KEYBOARD_LIGHTS = range(0, 160)
+
+
+def ioc(d, nr, size):
+    return (d << 30) | (size << 16) | (ord("H") << 8) | nr
+
+
+def find_hidraw(vid, pid):
+    for dev in glob.glob("/sys/class/hidraw/hidraw*"):
+        with open(dev + "/device/uevent") as f:
+            if f"HID_ID=0003:{vid:08X}:{pid:08X}" in f.read():
+                return "/dev/" + os.path.basename(dev)
+    sys.exit(f"Dispositivo {vid:04x}:{pid:04x} não encontrado")
+
+
+class ELC:  # API v4: output reports de 34 bytes, report ID 0
+    LEN = 34
+
+    def __init__(self):
+        self.fd = os.open(find_hidraw(0x187C, 0x0551), os.O_RDWR)
+
+    def send(self, data):
+        buf = bytearray(self.LEN)
+        for pos, vals in data:
+            buf[pos:pos + len(vals)] = bytes(vals)
+        os.write(self.fd, buf)
+        time.sleep(0.01)
+
+    def status(self):
+        buf = bytearray(self.LEN)
+        fcntl.ioctl(self.fd, ioc(3, 0x0A, self.LEN), buf)  # HIDIOCGINPUT
+        return buf[2]
+
+    def wait_ready(self):
+        for _ in range(100):
+            if self.status() != 34:  # ALIENRGB_V4_BUSY
+                return
+            time.sleep(0.02)
+
+    def control(self, kind):
+        self.send([(1, [0x03, 0x21, 0x00, kind, 0xFF, 0xFF])])
+
+    def set_color(self, ids, r, g, b):
+        self.wait_ready()
+        self.control(4)  # remover animação atual
+        self.control(1)  # iniciar nova
+        self.send([(1, [0x03, 0x27, r, g, b, 0, len(ids)] + list(ids))])
+        self.control(3)  # finalizar e tocar
+
+
+class Keyboard:  # API v5: feature reports de 64 bytes, report ID 0xCC
+    LEN = 64
+
+    def __init__(self):
+        self.fd = os.open(find_hidraw(0x0D62, 0xD2B1), os.O_RDWR)
+
+    def send(self, cmd):
+        buf = bytearray(self.LEN)
+        buf[0] = 0xCC
+        buf[1:1 + len(cmd)] = bytes(cmd)
+        fcntl.ioctl(self.fd, ioc(3, 0x06, self.LEN), buf)  # HIDIOCSFEATURE
+
+    def set_color(self, ids, r, g, b):
+        self.send([0x94])  # reset
+        self.send([0x93])  # status
+        ids = list(ids)
+        for i in range(0, len(ids), 15):
+            cmd = [0x8C, 0x02, 0x00]
+            for k in ids[i:i + 15]:
+                cmd += [k + 1, r, g, b]
+            self.send(cmd)
+        self.send([0x8C, 0x13])        # loop
+        self.send([0x8B, 0x01, 0xFF])  # update
+
+
+COR = "ad7fa8"  # lilás do terminal Ubuntu (Color5 claro da paleta escura)
+
+MODES = {
+    "discreto": [("teclado,energia", COR), ("tampa,touchpad", "000000")],
+    "normal": [("tudo", COR)],
+}
+
+
+STATE = os.path.expanduser("~/.cache/alien-rgb-modo")
+
+
+def main():
+    if len(sys.argv) == 2 and sys.argv[1].lower() == "alternar":
+        try:
+            with open(STATE) as f:
+                atual = f.read().strip()
+        except OSError:
+            atual = "discreto"
+        sys.argv[1] = "normal" if atual == "discreto" else "discreto"
+    if len(sys.argv) == 2 and sys.argv[1].lower() in MODES:
+        modo = sys.argv[1].lower()
+        for zones, color in MODES[modo]:
+            sys.argv[1:] = [zones, color]
+            main()
+        os.makedirs(os.path.dirname(STATE), exist_ok=True)
+        with open(STATE, "w") as f:
+            f.write(modo)
+        return
+    if len(sys.argv) != 3:
+        sys.exit(__doc__)
+    zones = sys.argv[1].lower().split(",")
+    if "tudo" in zones:
+        zones = list(ELC_LIGHTS) + ["teclado"]
+    color = sys.argv[2].lstrip("#")
+    r, g, b = (int(color[i:i + 2], 16) for i in (0, 2, 4))
+
+    unknown = [z for z in zones if z not in ELC_LIGHTS and z != "teclado"]
+    if unknown:
+        sys.exit(f"Zona desconhecida: {', '.join(unknown)}\n{__doc__}")
+
+    elc_ids = [ELC_LIGHTS[z] for z in zones if z in ELC_LIGHTS]
+    if elc_ids:
+        ELC().set_color(elc_ids, r, g, b)
+    if "teclado" in zones:
+        Keyboard().set_color(KEYBOARD_LIGHTS, r, g, b)
+
+
+if __name__ == "__main__":
+    main()

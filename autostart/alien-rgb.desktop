@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Alienware RGB (modo discreto)
+Exec=sh -c '"$HOME/.local/bin/alien-rgb" discreto'
+X-GNOME-Autostart-enabled=true
+NoDisplay=true

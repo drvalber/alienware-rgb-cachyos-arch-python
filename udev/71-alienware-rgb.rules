@@ -1,0 +1,5 @@
+# Permite que o usuário logado controle as luzes sem root
+# AW-ELC (touchpad, tampa, botão de energia)
+KERNEL=="hidraw*", ATTRS{idVendor}=="187c", ATTRS{idProduct}=="0551", TAG+="uaccess"
+# Teclado RGB Darfon
+KERNEL=="hidraw*", ATTRS{idVendor}=="0d62", ATTRS{idProduct}=="d2b1", TAG+="uaccess"
