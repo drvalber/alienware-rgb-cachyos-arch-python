@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+"""Interface gráfica do alien-rgb: escolha cor e zonas das luzes do Alienware m16 R2."""
+import os, shutil, subprocess, sys, threading
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, GLib, Gtk
+
+APP_ID = "io.github.alienrgb.Gui"
+
+ZONAS = [("teclado", "Teclado"), ("tampa", "Tampa (traseira)"),
+         ("touchpad", "Touchpad"), ("energia", "Botão de energia")]
+
+PRESETS = [("Branco", "ffffff"), ("Lilás", "ad7fa8"), ("Vermelho", "ff0000"),
+           ("Laranja", "ff6000"), ("Verde", "00ff00"), ("Ciano", "00ffff"),
+           ("Azul", "0000ff"), ("Roxo", "8000ff"), ("Desligado", "000000")]
+
+
+def cli():
+    """Localiza o comando alien-rgb (ao lado deste script ou no PATH)."""
+    local = os.path.join(os.path.dirname(os.path.realpath(__file__)), "alien-rgb")
+    if os.access(local, os.X_OK):
+        return local
+    return shutil.which("alien-rgb") or os.path.expanduser("~/.local/bin/alien-rgb")
+
+
+def rgba_hex(rgba):
+    return "".join(f"{round(c * 255):02x}" for c in (rgba.red, rgba.green, rgba.blue))
+
+
+class Janela(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Alienware RGB")
+        self.set_default_size(420, -1)
+
+        self.toasts = Adw.ToastOverlay()
+        corpo = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        corpo.append(Adw.HeaderBar())
+        self.toasts.set_child(corpo)
+        self.set_content(self.toasts)
+
+        pagina = Adw.PreferencesPage()
+        corpo.append(pagina)
+
+        # Cor
+        grupo_cor = Adw.PreferencesGroup(title="Cor")
+        pagina.add(grupo_cor)
+
+        css = Gtk.CssProvider()
+        css.load_from_string("".join(
+            f"button.cor-{c} {{ background: #{c}; border: 1px solid alpha(currentColor, .3); }}"
+            for _, c in PRESETS))
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+        grade = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE,
+                            max_children_per_line=5, min_children_per_line=5,
+                            column_spacing=6, row_spacing=6, homogeneous=True)
+        grade.set_margin_bottom(6)
+        for nome, cor in PRESETS:
+            b = Gtk.Button(tooltip_text=nome)
+            b.set_size_request(48, 36)
+            b.add_css_class(f"cor-{cor}")
+            b.connect("clicked", self.on_preset, cor)
+            grade.append(b)
+        grupo_cor.add(grade)
+
+        self.seletor = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(with_alpha=False),
+                                             valign=Gtk.Align.CENTER)
+        self.seletor.set_rgba(self.parse("ffffff"))
+        linha = Adw.ActionRow(title="Cor personalizada")
+        linha.add_suffix(self.seletor)
+        grupo_cor.add(linha)
+
+        # Zonas
+        grupo_zonas = Adw.PreferencesGroup(title="Zonas")
+        pagina.add(grupo_zonas)
+        self.checks = {}
+        for chave, rotulo in ZONAS:
+            row = Adw.SwitchRow(title=rotulo, active=True)
+            self.checks[chave] = row
+            grupo_zonas.add(row)
+
+        aplicar = Gtk.Button(label="Aplicar", halign=Gtk.Align.CENTER)
+        aplicar.add_css_class("suggested-action")
+        aplicar.add_css_class("pill")
+        aplicar.set_margin_top(12)
+        aplicar.connect("clicked", self.on_aplicar)
+        grupo_zonas.add(aplicar)
+
+        # Modos prontos
+        grupo_modos = Adw.PreferencesGroup(title="Modos prontos")
+        pagina.add(grupo_modos)
+        for modo, desc in [("discreto", "Tampa e touchpad apagados; teclado e energia em lilás"),
+                           ("normal", "Tudo em lilás")]:
+            row = Adw.ActionRow(title=modo.capitalize(), subtitle=desc, activatable=True)
+            row.add_suffix(Gtk.Image(icon_name="go-next-symbolic"))
+            row.connect("activated", lambda _r, m=modo: self.executar([m], f"Modo {m}"))
+            grupo_modos.add(row)
+
+    @staticmethod
+    def parse(cor):
+        rgba = Gdk.RGBA()
+        rgba.parse("#" + cor)
+        return rgba
+
+    def on_preset(self, _btn, cor):
+        self.seletor.set_rgba(self.parse(cor))
+        self.on_aplicar(None)
+
+    def on_aplicar(self, _btn):
+        zonas = [z for z, row in self.checks.items() if row.get_active()]
+        if not zonas:
+            self.toast("Escolha pelo menos uma zona")
+            return
+        cor = rgba_hex(self.seletor.get_rgba())
+        self.executar([",".join(zonas), cor], f"#{cor.upper()} aplicado")
+
+    def executar(self, args, ok_msg):
+        def tarefa():
+            try:
+                r = subprocess.run([cli(), *args], capture_output=True, text=True, timeout=30)
+                msg = ok_msg if r.returncode == 0 else \
+                    "Erro: " + (r.stderr.strip().splitlines() or ["falha desconhecida"])[-1]
+            except Exception as e:  # noqa: BLE001
+                msg = f"Erro: {e}"
+            GLib.idle_add(self.toast, msg)
+        threading.Thread(target=tarefa, daemon=True).start()
+
+    def toast(self, msg):
+        self.toasts.add_toast(Adw.Toast(title=msg, timeout=3))
+        return False
+
+
+class App(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id=APP_ID)
+
+    def do_activate(self):
+        (self.props.active_window or Janela(self)).present()
+
+
+if __name__ == "__main__":
+    sys.exit(App().run(sys.argv))

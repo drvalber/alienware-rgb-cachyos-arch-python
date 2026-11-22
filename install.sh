@@ -6,6 +6,12 @@ cd "$(dirname "$0")"
 install -Dm755 alien-rgb "$HOME/.local/bin/alien-rgb"
 install -Dm644 autostart/alien-rgb.desktop "$HOME/.config/autostart/alien-rgb.desktop"
 
+# Aplicativo gráfico no lançador
+install -Dm755 alien-rgb-gui "$HOME/.local/bin/alien-rgb-gui"
+mkdir -p "$HOME/.local/share/applications"
+sed "s|@BIN@|$HOME/.local/bin|" app/alien-rgb.desktop > "$HOME/.local/share/applications/alien-rgb.desktop"
+update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
+
 sudo install -m644 udev/71-alienware-rgb.rules /etc/udev/rules.d/71-alienware-rgb.rules
 sudo udevadm control --reload-rules
 sudo udevadm trigger --subsystem-match=hidraw

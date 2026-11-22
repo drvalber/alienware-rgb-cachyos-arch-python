@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Alienware RGB
+GenericName=Controle de luzes RGB
+Comment=Muda a cor do teclado, tampa, touchpad e botão de energia do Alienware
+Exec=@BIN@/alien-rgb-gui
+Icon=preferences-desktop-color
+Terminal=false
+Categories=Settings;HardwareSettings;
+Keywords=rgb;teclado;luz;led;alienware;cor;keyboard;
+StartupWMClass=io.github.alienrgb.Gui

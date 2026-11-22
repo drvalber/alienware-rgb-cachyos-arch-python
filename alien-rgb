@@ -68,6 +68,36 @@ class ELC:  # API v4: output reports de 34 bytes, report ID 0
         self.send([(1, [0x03, 0x27, r, g, b, 0, len(ids)] + list(ids))])
         self.control(3)  # finalizar e tocar
 
+    # O botão de energia é controlado pelo firmware conforme o estado de energia
+    # (animações 0x5b..0x60), então ignora a cor comum. Porta de
+    # Functions::SetPowerAction (API_V4) do AlienRGB SDK.
+    def set_power(self, light, r, g, b):
+        def acao(tipo, cor):  # [tipo, tempo, opcode, 0, ritmo, r, g, b]
+            return {"cor": [0, 7, 0xD0, 0, 0xFA], "pulso": [1, 7, 0xDC, 0, 0x64],
+                    "energia": [2, 3, 0xE8, 0, 0x64]}[tipo] + list(cor)
+        c, preto = (r, g, b), (0, 0, 0)
+        estados = {
+            0x5B: [acao("energia", c), acao("energia", preto)],  # tomada, suspenso
+            0x5C: [acao("cor", c)],                              # tomada
+            0x5D: [acao("energia", c), acao("energia", c)],      # carregando
+            0x5E: [acao("energia", c), acao("energia", preto)],  # bateria, suspenso
+            0x5F: [acao("cor", c)],                              # bateria
+            0x60: [acao("pulso", c)],                            # bateria crítica
+        }
+        self.wait_ready()
+        for cid, acoes in estados.items():
+            self.send([(1, [0x03, 0x22, 0x00, 4, 0, cid])])  # remover
+            self.send([(1, [0x03, 0x22, 0x00, 1, 0, cid])])  # iniciar
+            self.send([(1, [0x03, 0x23, 0x01, 0x00, 0x01, light])])  # selecionar luz
+            self.send([(3 + 8 * i, a) for i, a in enumerate(acoes)])  # cores
+            self.send([(1, [0x03, 0x22, 0x00, 2, 0, cid])])  # finalizar e salvar
+        self.control(5)  # tocar
+        for _ in range(50):  # o dispositivo fica ocupado aplicando
+            if self.status() == 34:
+                break
+            time.sleep(0.02)
+        self.wait_ready()
+
 
 class Keyboard:  # API v5: feature reports de 64 bytes, report ID 0xCC
     LEN = 64
@@ -136,7 +166,10 @@ def main():
 
     elc_ids = [ELC_LIGHTS[z] for z in zones if z in ELC_LIGHTS]
     if elc_ids:
-        ELC().set_color(elc_ids, r, g, b)
+        elc = ELC()
+        elc.set_color(elc_ids, r, g, b)
+        if ELC_LIGHTS["energia"] in elc_ids:
+            elc.set_power(ELC_LIGHTS["energia"], r, g, b)
     if "teclado" in zones:
         Keyboard().set_color(KEYBOARD_LIGHTS, r, g, b)
 
