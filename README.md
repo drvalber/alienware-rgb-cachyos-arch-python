@@ -15,7 +15,7 @@ O OpenRGB detecta o AW-ELC, mas não o teclado do m16 R2 ("Unknown platform 1102
 ./install.sh
 ```
 
-Instala o comando em `~/.local/bin`, a regra udev (acesso sem root), o modo discreto no login e o atalho **Super+Alt+T** (GNOME).
+Instala o comando em `~/.local/bin`, a regra udev (acesso sem root), o modo discreto no login e o atalho **Super+Alt+T** (GNOME ou KDE Plasma).
 
 ## Uso
 
